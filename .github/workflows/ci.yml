@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install (zero runtime dependencies)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+          # The zero-dependency claim is about what `pip install sysctlvet`
+          # pulls in. Proving it here is the difference between a claim and a test.
+          python -c "import sysctlvet, sys; print('third-party modules loaded:', [m for m in sys.modules if m in ('yaml','click','rich','mcp','requests')])"
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: CLI smoke
+        run: |
+          sysctlvet --version
+          sysctlvet rules | head -3
+          sysctlvet demo --quiet | tail -3
+
+      - name: Exit-code gate contract
+        run: |
+          # The whole point of --fail-on is that CI can gate on it, so the two
+          # directions are asserted here with real files, not just in unit tests.
+          cat > /tmp/clean.sysctl <<'EOF'
+          kernel.randomize_va_space = 2
+          kernel.kptr_restrict = 1
+          kernel.dmesg_restrict = 1
+          kernel.perf_event_paranoid = 2
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.all.accept_source_route = 0
+          fs.suid_dumpable = 0
+          EOF
+          cat > /tmp/bad.sysctl <<'EOF'
+          kernel.randomize_va_space = 0
+          kernel.unprivileged_bpf_disabled = 0
+          EOF
+          sysctlvet scan /tmp/clean.sysctl --fail-on high
+          if sysctlvet scan /tmp/bad.sysctl --fail-on high > /dev/null; then
+            echo "::error::bad.sysctl should exit 1 at --fail-on high"
+            exit 1
+          fi
+          echo "gate contract ok (clean=0, bad=1)"
+
+      - name: MCP manifest check
+        run: |
+          python -m pip install "mcp>=1.2,<2"
+          python - <<'PY'
+          import asyncio
+          from sysctlvet.mcp_server import build_server, tool_manifest
+          tools = asyncio.run(build_server().list_tools())
+          assert {t.name for t in tools} == {e["name"] for e in tool_manifest()}, "MCP tools drifted from the manifest"
+          print(f"mcp tools ok: {len(tools)}")
+          PY
+
+      - name: Zero third-party import guard
+        run: |
+          # The core package must import cleanly with no third-party modules
+          # installed at all -- not even the MCP extra.
+          python - <<'PY'
+          import subprocess, sys, os, json
+          env = {k: v for k, v in os.environ.items()}
+          env["PYTHONPATH"] = "src"
+          out = subprocess.run(
+              [sys.executable, "-c",
+               "import sys, json; before = set(sys.modules); import sysctlvet; "
+               "third = [m for m in set(sys.modules) - before "
+               "if m in ('yaml','click','rich','mcp','requests','pytest')]; "
+               "print(json.dumps(third)); assert not third, third"],
+              capture_output=True, text=True, env=env, check=True,
+          )
+          print("core import guard ok:", out.stdout.strip())
+          PY
+
+  fresh-clone:
+    # A visitor's first `git clone && pip install . && pytest` must work with
+    # only base deps installed -- no extras, no editable path tricks.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Fresh install and collect
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pytest
+          cd "$(mktemp -d)"
+          python -m pytest "$GITHUB_WORKSPACE/tests" --collect-only -q
+  badge-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+      # Everything the test suite can exercise must be installed here, otherwise
+      # self-skipping modules make the real count environment-dependent.
+      - name: Install with optional test deps
+        run: |
+          python -m pip install -e ".[mcp]" pytest
+      - name: README test-count badge vs pytest collection
+        run: |
+          # -o addopts= neutralises a project-level addopts="-q": with the -q below
+          # it becomes -qq and pytest -qq drops the "N tests collected" line.
+          # The badge pattern matches both "tests-99%20passing" and
+          # "tests-99-brightgreen" badge spellings.
+          actual=$(python -m pytest --collect-only -q -o addopts= 2>/dev/null | grep -oE "[0-9]+ tests? collected" | grep -oE "^[0-9]+" || true)
+          claimed=$(grep -oE "tests-[0-9]+" README.md | grep -oE "[0-9]+" | head -1 || true)
+          echo "collected=${actual:-NOTHING} claimed=${claimed:-NONE}"
+          if [ -z "$actual" ]; then
+            echo "::warning::pytest collected nothing - the badge check did not run"
+          elif [ "$actual" != "$claimed" ]; then
+            echo "::warning::README badge says $claimed but pytest collects $actual"
+          fi

@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sysctlvet"
+version = "0.1.0"
+description = "Zero-dependency kernel parameter (sysctl) auditor — resolves which line wins the sysctl.d load order, three passes (settings, combos, relations), evidence-first with line numbers, SARIF for CI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "xuange-hu" }]
+# Dependency-free on purpose: the hardening of a machine must be auditable
+# on that machine, including minimal images where pip cannot reach an index.
+dependencies = []
+keywords = [
+  "security",
+  "sysctl",
+  "kernel",
+  "hardening",
+  "linux",
+  "audit",
+  "static-analysis",
+  "sarif",
+  "devsecops",
+  "linter",
+  "cis-benchmark",
+  "sysctl.d",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: System :: Kernels",
+  "Topic :: System :: Systems Administration",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.optional-dependencies]
+# mcp 2.x renamed FastMCP -> MCPServer and moved the import path; this server
+# targets the 1.x line only.
+mcp = ["mcp>=1.2,<2"]
+
+[project.urls]
+Homepage = "https://github.com/xuange-hu/sysctlvet"
+Repository = "https://github.com/xuange-hu/sysctlvet"
+Issues = "https://github.com/xuange-hu/sysctlvet/issues"
+
+[project.scripts]
+sysctlvet = "sysctlvet.cli:main"
+sysctlvet-mcp = "sysctlvet.mcp_server:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sysctlvet = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Rule prose is documentation: splitting a sentence at column 120 makes the
+# generated rule table harder to read without changing any behaviour.
+"src/sysctlvet/rules.py" = ["E501"]
+# sys.path is injected above the import so a bare clone can run the tests.
+"tests/test_mcp_server.py" = ["E402"]
