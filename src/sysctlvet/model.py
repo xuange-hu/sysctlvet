@@ -138,6 +138,9 @@ class Report:
     findings: list[Finding] = field(default_factory=list)
     rules_run: int = 0
     rule_ids: list[str] = field(default_factory=list)
+    # 用户给出的路径里，压根不存在的那些。
+    # 这个字段存在的唯一理由：让"什么都没扫到"无法伪装成"这里很安全"。
+    missing: list[str] = field(default_factory=list)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -158,4 +161,5 @@ class Report:
             "findings": [f.to_dict() for f in self.findings],
             "counts": self.counts,
             "rules_run": self.rules_run,
+            "missing": list(self.missing),
         }

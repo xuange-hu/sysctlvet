@@ -19,8 +19,10 @@ def test_text_shows_fix_by_default_and_hides_on_quiet():
 
 def test_json_roundtrips():
     payload = json.loads(render_json(run_demo()))
-    assert set(payload) == {"source", "findings", "counts", "rules_run"}
+    assert set(payload) == {"source", "findings", "counts", "rules_run", "missing"}
     assert payload["counts"] == run_demo().counts
+    # missing 必须出现在机器可读输出里：CI 靠它区分"没扫到"和"很干净"
+    assert payload["missing"] == []
 
 
 def test_sarif_valid_envelope():

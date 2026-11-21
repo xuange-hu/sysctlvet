@@ -20,7 +20,12 @@ def _emit(report, args) -> int:
     fmt = getattr(args, "format", "text")
     quiet = getattr(args, "quiet", False)
     sys.stdout.write(render(report, fmt=fmt, quiet=quiet) + "\n")
-    return 1 if report.should_fail(getattr(args, "fail_on", "none")) else 0
+    # 三态退出码：0 干净 / 1 命中门禁 / 2 没扫全。
+    # 路径不存在、目录里没有匹配文件，都属于"没扫全"，不能退 0 ——
+    # 否则 CI 里的 `sysctlvet scan /etc/sysctl.d` 在打错字时永远是绿的。
+    if getattr(report, "missing", None):
+        return 2
+    return 1 if report.should_fail(getattr(args, "fail_on", "high")) else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,8 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on",
         choices=FAIL_ON_CHOICES,
-        default="none",
-        help="exit 1 when a finding at or above this severity exists",
+        default="high",
+        help="exit 1 when a finding at or above this severity exists (default: high; 'none' disables the gate)",
     )
     scan.add_argument("--quiet", action="store_true", help="hide fix hints")
 

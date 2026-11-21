@@ -54,7 +54,7 @@ def parse_file(path: str) -> ConfigFile:
 def scan_paths(paths: list[str] | str) -> Report:
     if isinstance(paths, str):
         paths = [paths]
-    files, _missing = collect(list(paths))
+    files, missing = collect(list(paths))
     configs = [parse_file(path) for path in files]
     eff = resolve(configs)
     findings = evaluate(configs, eff)
@@ -65,4 +65,5 @@ def scan_paths(paths: list[str] | str) -> Report:
         findings=findings,
         rules_run=len(REGISTRY),
         rule_ids=sorted(item.id for item in REGISTRY),
+        missing=missing,
     )

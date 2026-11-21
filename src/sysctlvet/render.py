@@ -22,6 +22,12 @@ def render_text(report: Report, quiet: bool = False) -> str:
     parts = [f"{counts[name]} {name}" for name in SEVERITY_ORDER if counts.get(name)]
     summary = ", ".join(parts) if parts else "no findings"
     out.append(f"{len(report.findings)} finding(s) across {len(report.targets)} file(s): {summary}")
+    if report.missing:
+        # "no findings" 与 "输入不存在" 必须印成两句不同的话。
+        out.append("")
+        out.append(
+            "scan incomplete — 以下路径不存在，未参与判定: " + ", ".join(report.missing)
+        )
     return "\n".join(out)
 
 

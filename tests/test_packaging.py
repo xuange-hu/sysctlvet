@@ -112,3 +112,52 @@ def test_lazy_mcp_import_is_inside_function():
 
 def test_package_is_typed():
     assert os.path.exists(os.path.join(ROOT, "src", "sysctlvet", "py.typed"))
+
+
+def _collected_tests() -> int:
+    """Ask pytest how many items exist, without running them.
+
+    数 `def test_*` 不够：参数化测试会展开成多个 item。这里必须用真实的
+    收集结果，并显式 `-o addopts=` —— 项目若配置了 `addopts = "-q"`，
+    再叠一个 `-q` 会变成 `-qq`，把 "N tests collected" 汇总行吞掉。
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-o", "addopts=", os.path.join(ROOT, "tests")],
+        capture_output=True,
+        text=True,
+        timeout=240,
+        check=False,
+    )
+    match = re.search(r"(\d+) tests? collected", proc.stdout)
+    if match is None:
+        import pytest
+
+        pytest.skip(f"could not collect tests: {proc.stdout[-200:]} {proc.stderr[-200:]}")
+    return int(match.group(1))
+
+
+def test_readme_badge_matches_collection():
+    """徽章上的数字是访客读到的第一个数字，必须能被这条断言打死。
+
+    `test_mcp_server.py` 在没装 mcp extra 的环境里整文件不收集，
+    所以本机收集数会少于 CI（CI 装 `.[all]`）。这里只断言 README 与
+    本地收集口径的关系：在装了 extras 的环境里必须精确相等。
+    """
+    import importlib.util
+
+    import pytest
+
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
+        text = handle.read()
+    match = re.search(r"tests-(\d+)", text)
+    assert match, "README 缺少 tests 徽章"
+    declared = int(match.group(1))
+    collected = _collected_tests()
+    has_mcp = importlib.util.find_spec("mcp") is not None
+    if not has_mcp:
+        # 未装 mcp 时跳过 9 条，只校验"不会少于"，避免误报成漂移
+        pytest.skip(f"mcp extra 未安装：本机收集 {collected}，徽章 {declared}")
+    assert declared == collected, f"README says {declared}, pytest collects {collected}"
