@@ -31,27 +31,46 @@ from .model import (
 
 
 def tier_of(path: str) -> int:
-    """Map a file path to its load tier (lower = loaded earlier = loses)."""
+    """Map a file path to its load tier.
+
+    The tier is *not* the sort key. Per ``man sysctl.d`` the only thing a
+    directory decides is **same-name replacement** ("Files in /etc/ override
+    files with the same name in /run/, /usr/local/lib/ and /usr/lib/"); the
+    application order itself is the lexicographic order of the *filename*,
+    regardless of directory. ``/etc/sysctl.conf`` is a separate legacy channel
+    that ``sysctl --system`` applies last, so it does win outright.
+    """
     norm = path.replace("\\", "/").lower()
     name = os.path.basename(norm)
-    if name == "sysctl.conf" or norm.endswith("/etc/sysctl.conf"):
+    if name == "sysctl.conf" and ("/etc/" in norm or norm.startswith("etc/")):
         return TIER_ETC_CONF
-    if "etc/sysctl.d" in norm:
-        return TIER_ETC_D
-    if "run/sysctl.d" in norm:
-        return TIER_RUN
-    if "usr/local/lib/sysctl.d" in norm:
-        return TIER_USR_LOCAL
-    if "usr/lib/sysctl.d" in norm:
-        return TIER_USR_LIB
+    # Anchor on the suffix rather than a bare substring: "/home/u/usr/lib/
+    # sysctl.d/x.conf" is not a distribution directory.
+    for marker, tier in (
+        ("/etc/sysctl.d/", TIER_ETC_D),
+        ("/run/sysctl.d/", TIER_RUN),
+        ("/usr/local/lib/sysctl.d/", TIER_USR_LOCAL),
+        ("/usr/lib/sysctl.d/", TIER_USR_LIB),
+        ("/lib/sysctl.d/", TIER_USR_LIB),
+    ):
+        if marker in norm or norm.startswith(marker.lstrip("/")):
+            return tier
     return TIER_ETC_D  # ad-hoc files: treated like site config
 
 
 def load_key(path: str) -> tuple:
-    """Sort key implementing the precedence order (later in sort = wins)."""
+    """Sort key implementing the precedence order (later in sort = wins).
+
+    Documented order (``man sysctl.d``): *filename* lexicographic, across all
+    directories. ``/etc/sysctl.conf`` is applied last by ``sysctl --system``.
+    The tier is folded in only as a tie-breaker for one identical filename,
+    where the higher-priority directory must win.
+    """
     tier = tier_of(path)
     name = os.path.basename(path.replace("\\", "/")).lower()
-    return (tier, name, path.lower())
+    if tier == TIER_ETC_CONF:
+        return (1, "", "", name)
+    return (0, name, tier, path.lower())
 
 
 def resolve(files: list[ConfigFile]) -> dict[str, Effective]:

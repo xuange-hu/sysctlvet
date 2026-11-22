@@ -32,7 +32,13 @@ def test_tier_windows_separators():
     assert tier_of("C:\\etc\\sysctl.conf") == TIER_ETC_CONF
 
 
-def test_load_key_orders_tier_then_name():
+def test_load_key_orders_filename_then_tier():
+    """``man sysctl.d``: sort by *filename*, regardless of directory.
+
+    The directory only decides same-name replacement, so the tier rides along
+    as a tie-breaker after the basename. ``/etc/sysctl.conf`` is the legacy
+    channel ``sysctl --system`` applies last.
+    """
     keys = [
         load_key("/etc/sysctl.conf"),
         load_key("/etc/sysctl.d/99-late.conf"),
@@ -40,11 +46,37 @@ def test_load_key_orders_tier_then_name():
         load_key("/usr/lib/sysctl.d/50-vendor.conf"),
     ]
     assert sorted(keys) == [
-        load_key("/usr/lib/sysctl.d/50-vendor.conf"),
         load_key("/etc/sysctl.d/10-early.conf"),
+        load_key("/usr/lib/sysctl.d/50-vendor.conf"),
         load_key("/etc/sysctl.d/99-late.conf"),
         load_key("/etc/sysctl.conf"),
     ]
+
+
+def test_later_filename_beats_higher_directory_tier():
+    """A vendor file named later than a local one wins — not a blanket /etc/ win.
+
+    This is the regression guard for the 2026-11-18 audit CRITICAL: the engine
+    used to sort by directory tier first, so ``/etc/sysctl.d/10-hardening.conf``
+    silently beat ``/usr/lib/sysctl.d/99-vendor.conf`` and the reported
+    "effective" value (and every SYS301 "hardening reverted" conclusion built on
+    it) was inverted.
+    """
+    files = [
+        _file("net.ipv4.ip_forward = 0\n", "etc/sysctl.d/10-hardening.conf"),
+        _file("net.ipv4.ip_forward = 1\n", "usr/lib/sysctl.d/99-vendor.conf"),
+    ]
+    eff = resolve(files)
+    assert eff["net.ipv4.ip_forward"].winner.file.endswith("99-vendor.conf")
+    assert eff["net.ipv4.ip_forward"].winner.value == "1"
+
+
+def test_same_basename_higher_tier_still_wins():
+    files = [
+        _file("k = 1\n", "usr/lib/sysctl.d/50-default.conf"),
+        _file("k = 0\n", "etc/sysctl.d/50-default.conf"),
+    ]
+    assert resolve(files)["k"].winner.value == "0"
 
 
 def test_last_assignment_wins():
